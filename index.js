@@ -1,73 +1,91 @@
 import express from "express";
-import { Client, GatewayIntentBits, PermissionsBitField } from "discord.js";
+import {
+  Client,
+  GatewayIntentBits,
+  Collection,
+  REST,
+  Routes
+} from "discord.js";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
 
 const prefix = "!";
+client.prefixCommands = new Collection();
+client.slashCommands = [];
 
-// ---------- Simple web server for keep-alive ----------
+// Load all commands
+const commandsPath = path.join(__dirname, "commands");
+const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith(".js"));
+
+for (const file of commandFiles) {
+  const command = await import(`./commands/${file}`);
+  client.prefixCommands.set(command.name, command);
+  if (command.slashCommand) {
+    client.slashCommands.push(command.slashCommand.toJSON());
+  }
+}
+
+// ---------- Web server ----------
 const app = express();
-
-app.get("/", (req, res) => {
-  res.send("Bot is alive");
-});
-
-// Optional health endpoint
-app.get("/health", (req, res) => {
-  res.json({ status: "ok", bot: client.user ? client.user.tag : "starting" });
-});
-
-// Use Render's port or fallback to 3000
+app.get("/", (req, res) => res.send("Bot is alive"));
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Web server listening on port ${PORT}`);
-});
-// -----------------------------------------------------
+app.listen(PORT, () => console.log(`Web server on ${PORT}`));
+// ---------------------------------
 
-client.once("ready", () => {
+client.once("ready", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
+
+  // Register slash commands (guild-based for fast update; change to global if you want)
+  const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_BOT_TOKEN);
+  try {
+    await rest.put(
+      Routes.applicationCommands(client.user.id),
+      { body: client.slashCommands }
+    );
+    console.log("✅ Slash commands registered.");
+  } catch (err) {
+    console.error("Slash register error:", err);
+  }
 });
 
+// Prefix handler
 client.on("messageCreate", async (message) => {
   if (!message.content.startsWith(prefix) || message.author.bot) return;
 
   const args = message.content.slice(prefix.length).trim().split(/ +/);
-  const command = args.shift().toLowerCase();
+  const commandName = args.shift().toLowerCase();
 
-  if (command === "say") {
-    // Only Administrators may use this
-    if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-      return message.reply("❌ You don’t have permission to use this command.");
-    }
+  const command = client.prefixCommands.get(commandName);
+  if (!command) return;
 
-    // Get first mentioned channel
-    const channel = message.mentions.channels.first();
-    if (!channel) {
-      return message.reply("❌ You must mention a channel, like `!say #general Hello!`");
-    }
-
-    // Remove the first arg (the channel mention) from args and join the rest
-    // When a channel is mentioned, the mention is the first token, so slice(1)
-    const text = args.slice(1).join(" ");
-    if (!text) {
-      return message.reply("❌ You must provide a message.");
-    }
-
-    try {
-      await channel.send(text);
-      await message.reply(`✅ Message sent to ${channel}`);
-    } catch (err) {
-      console.error("Send error:", err);
-      await message.reply("❌ Failed to send the message.");
-    }
+  try {
+    await command.executePrefix(message, args);
+  } catch (err) {
+    console.error(err);
+    message.reply("❌ Error executing prefix command.");
   }
 });
 
-// login using environment variable
+// Slash handler
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  const command = client.prefixCommands.get(interaction.commandName);
+  if (!command) return;
+
+  try {
+    await command.executeSlash(interaction);
+  } catch (err) {
+    console.error(err);
+    interaction.reply({ content: "❌ Error executing slash command.", ephemeral: true });
+  }
+});
+
 client.login(process.env.DISCORD_BOT_TOKEN);
