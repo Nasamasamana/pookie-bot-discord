@@ -1,42 +1,44 @@
-require('dotenv').config();
-const { Client, GatewayIntentBits } = require('discord.js');
+import { Client, GatewayIntentBits } from "discord.js";
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
+    GatewayIntentBits.MessageContent,
+  ],
 });
 
-// When bot is ready
-client.once('ready', () => {
+const prefix = "!";
+
+client.once("ready", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
-// Command: !say <message>
-client.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
+client.on("messageCreate", async (message) => {
+  if (!message.content.startsWith(prefix) || message.author.bot) return;
 
-  // Only trigger on !say
-  if (message.content.startsWith("!say ")) {
-    const text = message.content.slice(5).trim();
+  const args = message.content.slice(prefix.length).trim().split(/ +/);
+  const command = args.shift().toLowerCase();
 
-    if (!text) {
-      return message.reply("⚠️ You need to provide a message!");
-    }
-
-    // Change this to your target channel ID
-    const targetChannelId = process.env.TARGET_CHANNEL_ID;
-    const channel = message.guild.channels.cache.get(targetChannelId);
-
+  if (command === "say") {
+    const channel = message.mentions.channels.first();
     if (!channel) {
-      return message.reply("❌ Target channel not found!");
+      return message.reply("❌ You must mention a channel, like `!say #general hello`");
     }
 
-    channel.send(text);
-    message.reply("✅ Sent your message!");
+    const text = args.slice(1).join(" ");
+    if (!text) {
+      return message.reply("❌ You must provide a message.");
+    }
+
+    try {
+      await channel.send(text);
+      await message.reply(`✅ Message sent to ${channel}`);
+    } catch (err) {
+      console.error(err);
+      await message.reply("❌ Failed to send the message.");
+    }
   }
 });
 
-client.login(process.env.DISCORD_TOKEN);
+client.login(process.env.DISCORD_BOT_TOKEN);
