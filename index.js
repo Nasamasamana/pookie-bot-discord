@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits } from "discord.js";
+import { Client, GatewayIntentBits, PermissionsBitField } from "discord.js";
 
 const client = new Client({
   intents: [
@@ -21,9 +21,14 @@ client.on("messageCreate", async (message) => {
   const command = args.shift().toLowerCase();
 
   if (command === "say") {
+    // ✅ Check if user has Administrator permission
+    if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+      return message.reply("❌ You don’t have permission to use this command.");
+    }
+
     const channel = message.mentions.channels.first();
     if (!channel) {
-      return message.reply("❌ You must mention a channel, like `!say #general hello`");
+      return message.reply("❌ You must mention a channel, like `!say #general Hello!`");
     }
 
     const text = args.slice(1).join(" ");
