@@ -2,9 +2,9 @@ const { REST, Routes } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 
-const token = 'YOUR_BOT_TOKEN';
-const clientId = 'YOUR_CLIENT_ID';
-const guildId = 'YOUR_TEST_GUILD_ID'; // For testing
+const token = process.env.BOT_TOKEN; // Use your Render environment variable
+const clientId = process.env.CLIENT_ID; 
+const guildId = process.env.GUILD_ID; // A test server you control
 
 const commands = [];
 const commandsPath = path.join(__dirname, 'commands');
