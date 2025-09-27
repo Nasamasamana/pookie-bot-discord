@@ -1,33 +1,26 @@
-// commands/announceConfirm.js
-const { getDraft, deleteDraft } = require('../utils/drafts');
-const announceHandler = require('../interactions/announceHandler');
+import { getDraft, deleteDraft } from '../utils/drafts.js';
+import { EmbedBuilder } from 'discord.js';
 
-module.exports = {
-  name: 'announceConfirm',
-  async execute({ message, client }) {
-    try {
-      if (!client.__announceHandlerAttached) {
-        client.on('interactionCreate', async (interaction) => {
-          try { await announceHandler(interaction, client); } catch (e) { console.error(e); }
-        });
-        client.__announceHandlerAttached = true;
-      }
+export default {
+  name: 'announceconfirm', // prefix: p!announceconfirm
+  description: 'Send the announcement to the selected channel',
+  run: async (client, message, args) => {
+    const draft = getDraft(message.author.id);
+    if (!draft) return message.reply('No draft found. Use p!announcecreate first.');
 
-      const userId = message.author.id;
-      const draft = getDraft(userId);
-      if (!draft) return message.reply('No draft to confirm. Create with p!announceCreate');
-      if (!draft.channelId) return message.reply('No target channel selected. Set channel in the builder first.');
+    const channel = message.guild.channels.cache.get(draft.channelId);
+    if (!channel) return message.reply('Channel not found.');
 
-      const ch = await message.client.channels.fetch(draft.channelId).catch(() => null);
-      if (!ch || !ch.isTextBased()) return message.reply('Target channel unreachable or not a text channel.');
+    const embed = new EmbedBuilder()
+      .setTitle(draft.title || '')
+      .setDescription(draft.description || '')
+      .setColor(draft.color || '#0099ff')
+      .setFooter({ text: draft.footer || '' })
+      .setImage(draft.image || null)
+      .setThumbnail(draft.thumbnail || null);
 
-      const embed = announceHandler.buildAnnouncementEmbed(draft);
-      await ch.send({ embeds: [embed] });
-      deleteDraft(userId);
-      return message.reply(`Announcement posted to <#${draft.channelId}>`);
-    } catch (err) {
-      console.error('announceConfirm error', err);
-      return message.reply('Failed to post announcement (permissions?).');
-    }
+    await channel.send({ embeds: [embed] });
+    deleteDraft(message.author.id);
+    message.reply('Announcement sent!');
   }
 };
