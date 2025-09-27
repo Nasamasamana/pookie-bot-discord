@@ -48,7 +48,7 @@ function refreshTimeout(userId) {
   if (d.timeout) clearTimeout(d.timeout);
   d.timeout = setTimeout(() => {
     drafts.delete(userId);
-  }, 30 * 60 * 1000); // 30 minutes
+  }, 30 * 60 * 1000); // 30 minutes idle timeout
   drafts.set(userId, d);
 }
 
