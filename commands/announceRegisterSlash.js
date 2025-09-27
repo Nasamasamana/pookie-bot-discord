@@ -1,36 +1,30 @@
-// commands/announce_register_slash.js
-// Drop this file into your existing commands/ directory.
-// Run it once as a prefix command (p!announce_register_slash) in each guild where you want slash support.
-// It will register a guild-level /announce command (subcommands) and attach an interaction handler
-// that delegates to your existing interactions/announceHandler for buttons/modals/selects.
+// commands/announceRegisterSlash.js
+// Run p!announceRegisterSlash in each guild where you want /announce commands to appear.
+// This registers a guild-scoped /announce command (with subcommands) and attaches a slash handler.
 
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ApplicationCommandOptionType } = require('discord.js');
-const announceHandler = require('../interactions/announceHandler'); // must exist (the file you already have)
-const { getDraft, saveDraft } = require('../utils/drafts');
+const announceHandler = require('../interactions/announceHandler');
+const { getDraft, saveDraft, deleteDraft } = require('../utils/drafts');
 
 module.exports = {
-  name: 'announce_register_slash',
+  name: 'announceRegisterSlash',
   async execute({ message, client }) {
     try {
-      if (!message.guild) return message.reply('Run this command in a server (guild) channel, not in DMs.');
+      if (!message.guild) return message.reply('Run this command in a server channel.');
 
-      // ensure interactions handler is attached once (for button/modal/select handling)
+      // attach generic interactions handler if not attached
       if (!client.__announceHandlerAttached) {
         client.on('interactionCreate', async (interaction) => {
           try {
-            // If a chat input command, we handle it below; otherwise delegate to announceHandler
-            if (interaction.isChatInputCommand()) {
-              // handled in the other listener below (we attach a dedicated handler for slash commands too)
-              // leave it to the slash-specific listener created below.
-            } else {
-              // delegate to your existing announceHandler (handles buttons, modals, selects)
+            // chat input commands handled by the following block — but non-chat interactions go to announceHandler
+            if (!interaction.isChatInputCommand()) {
               await announceHandler(interaction, client);
             }
           } catch (err) {
-            console.error('interactionCreate => announceHandler error:', err);
+            console.error('interaction handler error:', err);
             try {
               if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({ content: 'Error handling interaction (buttons/modals).', ephemeral: true });
+                await interaction.reply({ content: 'Error handling interaction.', ephemeral: true });
               }
             } catch {}
           }
@@ -38,43 +32,37 @@ module.exports = {
         client.__announceHandlerAttached = true;
       }
 
-      // attach slash handler if not attached (this one handles ChatInputCommand subcommands)
+      // attach slash-chat handler once
       if (!client.__announceSlashHandlerAttached) {
         client.on('interactionCreate', async (interaction) => {
           try {
             if (!interaction.isChatInputCommand()) return;
-
             if (interaction.commandName !== 'announce') return;
 
             const sub = interaction.options.getSubcommand();
             const userId = interaction.user.id;
-            // ensure a draft exists for the user
             const draft = getDraft(userId);
 
-            // Helper builders from your interactions file
             const buildBuilderEmbed = announceHandler.buildBuilderEmbed;
             const buildBuilderComponents = announceHandler.buildBuilderComponents;
             const buildAnnouncementEmbed = announceHandler.buildAnnouncementEmbed;
             const updateBuilderMessage = announceHandler.updateBuilderMessage;
 
-            // ---- SUBCOMMAND: create ----
+            // create
             if (sub === 'create') {
               await interaction.deferReply({ ephemeral: true });
-              // optional channel option
               const channelOpt = interaction.options.getChannel('channel');
               if (channelOpt && channelOpt.isTextBased()) {
                 draft.channelId = channelOpt.id;
                 saveDraft(userId, draft);
               }
 
-              // build builder message in the current channel
               const embed = buildBuilderEmbed(draft, interaction.user);
               const components = buildBuilderComponents(userId, draft);
 
-              // send builder message in the channel where command used
               const sent = await interaction.channel.send({ embeds: [embed], components }).catch(async (err) => {
-                console.error('Failed to send builder message:', err);
-                await interaction.editReply({ content: 'Failed to send builder message in this channel (check permissions).', embeds: [], components: [] });
+                console.error('failed send builder', err);
+                await interaction.editReply({ content: 'Failed to send builder message in this channel (check permissions).', ephemeral: true });
                 return null;
               });
               if (!sent) return;
@@ -82,13 +70,11 @@ module.exports = {
               draft.builderMessage = { channelId: interaction.channel.id, messageId: sent.id };
               saveDraft(userId, draft);
 
-              await interaction.editReply({ content: `Announcement builder created in ${interaction.channel}. Use the buttons to edit/toggle fields.`, ephemeral: true });
-              return;
+              return interaction.editReply({ content: `Builder created in ${interaction.channel}. Use the builder buttons to edit.`, ephemeral: true });
             }
 
-            // ---- SUBCOMMAND: preview ----
+            // preview (ephemeral)
             if (sub === 'preview') {
-              // ephemeral preview (only visible to the user in this channel)
               const embed = buildAnnouncementEmbed(draft);
               const rows = [
                 new ActionRowBuilder().addComponents(
@@ -97,20 +83,12 @@ module.exports = {
                   new ButtonBuilder().setCustomId(`announce_cancelpreview_${userId}`).setLabel('Dismiss').setStyle(ButtonStyle.Danger)
                 )
               ];
-
-              // reply ephemeral with embed and Dismiss button
-              await interaction.reply({ embeds: [embed], components: rows, ephemeral: true }).catch(async (err) => {
-                console.error('Failed to send ephemeral preview:', err);
-                try { await interaction.reply({ content: 'Could not send ephemeral preview.', ephemeral: true }); } catch {}
-              });
-              return;
+              return interaction.reply({ embeds: [embed], components: rows, ephemeral: true });
             }
 
-            // ---- SUBCOMMAND: edit ----
+            // edit
             if (sub === 'edit') {
               await interaction.deferReply({ ephemeral: true });
-
-              // try to reopen builder in original builder channel; if missing, use current channel
               let targetChannel = null;
               if (draft.builderMessage && draft.builderMessage.channelId) {
                 targetChannel = await client.channels.fetch(draft.builderMessage.channelId).catch(() => null);
@@ -120,7 +98,7 @@ module.exports = {
               const embed = buildBuilderEmbed(draft, interaction.user);
               const rows = buildBuilderComponents(userId, draft);
               const sent = await targetChannel.send({ embeds: [embed], components: rows }).catch(async (err) => {
-                console.error('Failed to reopen builder:', err);
+                console.error('reopen builder fail', err);
                 await interaction.editReply({ content: 'Failed to reopen builder in that channel.', ephemeral: true });
                 return null;
               });
@@ -128,53 +106,40 @@ module.exports = {
               draft.builderMessage = { channelId: targetChannel.id, messageId: sent.id };
               saveDraft(userId, draft);
 
-              await interaction.editReply({ content: `Builder reopened in ${targetChannel}.`, ephemeral: true });
-              return;
+              return interaction.editReply({ content: `Builder reopened in ${targetChannel}.`, ephemeral: true });
             }
 
-            // ---- SUBCOMMAND: confirm ----
+            // confirm
             if (sub === 'confirm') {
               await interaction.deferReply({ ephemeral: true });
-              if (!draft.channelId) {
-                return interaction.editReply({ content: 'No target channel set in your draft. Open the builder and set a channel first.', ephemeral: true });
-              }
+              if (!draft.channelId) return interaction.editReply({ content: 'No target channel set in your draft. Open the builder and set one first.', ephemeral: true });
               const ch = await client.channels.fetch(draft.channelId).catch(() => null);
-              if (!ch || !ch.isTextBased()) {
-                return interaction.editReply({ content: 'Cannot reach the target channel or it is not a text channel.', ephemeral: true });
-              }
+              if (!ch || !ch.isTextBased()) return interaction.editReply({ content: 'Cannot reach the target channel or it is not a text channel.', ephemeral: true });
+
               const finalEmbed = buildAnnouncementEmbed(draft);
               try {
                 await ch.send({ embeds: [finalEmbed] });
-                // clear draft after sending
-                const { deleteDraft } = require('../utils/drafts');
                 deleteDraft(userId);
                 return interaction.editReply({ content: `Announcement sent to <#${draft.channelId}>`, ephemeral: true });
               } catch (err) {
-                console.error('Failed to send announcement:', err);
-                return interaction.editReply({ content: 'Failed to send announcement — check bot permissions in the target channel.', ephemeral: true });
+                console.error('send fail', err);
+                return interaction.editReply({ content: 'Failed to send — check bot permissions in the target channel.', ephemeral: true });
               }
             }
 
           } catch (err) {
-            console.error('Slash announce handler error:', err);
-            try {
-              if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({ content: 'Internal error handling /announce. Check bot logs.', ephemeral: true });
-              } else {
-                await interaction.editReply({ content: 'Internal error handling /announce. Check bot logs.' });
-              }
-            } catch {}
+            console.error('slash handler error', err);
+            try { if (!interaction.replied && !interaction.deferred) await interaction.reply({ content: 'Internal error handling /announce.', ephemeral: true }); } catch {}
           }
         });
 
         client.__announceSlashHandlerAttached = true;
       }
 
-      // Now register the slash command in this guild (create or edit so it appears instantly)
-      const guild = message.guild;
+      // register guild command
       const data = {
         name: 'announce',
-        description: 'Announcement tools (create / preview / edit / confirm)',
+        description: 'Announcement builder and preview',
         options: [
           {
             name: 'create',
@@ -192,7 +157,7 @@ module.exports = {
           {
             name: 'preview',
             type: ApplicationCommandOptionType.Subcommand,
-            description: 'Preview your saved announcement (only visible to you in-channel)'
+            description: 'Preview your saved announcement (ephemeral, visible only to you)'
           },
           {
             name: 'edit',
@@ -207,20 +172,19 @@ module.exports = {
         ]
       };
 
-      // Fetch existing guild commands and create or edit our 'announce' command
-      const existing = await guild.commands.fetch();
+      const existing = await message.guild.commands.fetch();
       const found = existing.find(c => c.name === 'announce');
 
       if (found) {
-        await guild.commands.edit(found.id, data);
+        await message.guild.commands.edit(found.id, data);
       } else {
-        await guild.commands.create(data);
+        await message.guild.commands.create(data);
       }
 
-      return message.reply('Slash command `/announce` has been registered in this server. Use /announce create|preview|edit|confirm. (You can delete this registration command after.)');
+      return message.reply('Slash command `/announce` registered in this server. Use /announce create|preview|edit|confirm.');
     } catch (err) {
-      console.error('announce_register_slash error:', err);
-      try { await message.reply('Failed to register slash command — check bot logs and that bot has "applications.commands" permission.'); } catch {}
+      console.error('announceRegisterSlash error', err);
+      return message.reply('Failed to register slash command — check logs and bot permissions (applications.commands).');
     }
   }
 };
