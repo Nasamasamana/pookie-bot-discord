@@ -13,7 +13,7 @@ const {
 
 const { getDraft, saveDraft, deleteDraft } = require('../utils/drafts');
 
-// --- helpers ---
+// Build the builder-summary embed shown in the builder message
 function buildBuilderEmbed(draft, user) {
   const embed = new EmbedBuilder()
     .setTitle('Announcement Builder')
@@ -31,10 +31,11 @@ function buildBuilderEmbed(draft, user) {
   return embed;
 }
 
+// Build the action rows used in the builder
 function buildBuilderComponents(userId, draft) {
   const rows = [];
 
-  // row 1
+  // Row 1: title/desc
   rows.push(new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`announce_toggle_title_${userId}`).setLabel(`Title: ${draft.toggles.title ? 'ON' : 'OFF'}`).setStyle(draft.toggles.title ? ButtonStyle.Success : ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`announce_edit_title_${userId}`).setLabel('Edit Title').setStyle(ButtonStyle.Primary).setDisabled(!draft.toggles.title),
@@ -42,7 +43,7 @@ function buildBuilderComponents(userId, draft) {
     new ButtonBuilder().setCustomId(`announce_edit_description_${userId}`).setLabel('Edit Desc').setStyle(ButtonStyle.Primary).setDisabled(!draft.toggles.description)
   ));
 
-  // row 2
+  // Row 2: set channel / color selection / custom color / done
   const colorOptions = [
     new StringSelectMenuOptionBuilder().setLabel('Default').setValue('none'),
     new StringSelectMenuOptionBuilder().setLabel('Blue').setValue('#3498db'),
@@ -51,6 +52,7 @@ function buildBuilderComponents(userId, draft) {
     new StringSelectMenuOptionBuilder().setLabel('Red').setValue('#e74c3c'),
     new StringSelectMenuOptionBuilder().setLabel('Purple').setValue('#9b59b6')
   ];
+
   rows.push(new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`announce_setchannel_${userId}`).setLabel('Set Channel').setStyle(ButtonStyle.Primary),
     new StringSelectMenuBuilder().setCustomId(`announce_color_select_${userId}`).setPlaceholder('Pick color (preset)').addOptions(colorOptions),
@@ -58,7 +60,7 @@ function buildBuilderComponents(userId, draft) {
     new ButtonBuilder().setCustomId(`announce_done_${userId}`).setLabel('✅ Done').setStyle(ButtonStyle.Success)
   ));
 
-  // row 3
+  // Row 3: footer / image
   rows.push(new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`announce_toggle_footer_${userId}`).setLabel(`Footer: ${draft.toggles.footer ? 'ON' : 'OFF'}`).setStyle(draft.toggles.footer ? ButtonStyle.Success : ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`announce_edit_footer_${userId}`).setLabel('Edit Footer').setStyle(ButtonStyle.Primary).setDisabled(!draft.toggles.footer),
@@ -66,7 +68,7 @@ function buildBuilderComponents(userId, draft) {
     new ButtonBuilder().setCustomId(`announce_edit_image_${userId}`).setLabel('Edit Image URL').setStyle(ButtonStyle.Primary).setDisabled(!draft.toggles.image)
   ));
 
-  // row 4
+  // Row 4: thumbnail / cancel
   rows.push(new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`announce_toggle_thumbnail_${userId}`).setLabel(`Thumb: ${draft.toggles.thumbnail ? 'ON' : 'OFF'}`).setStyle(draft.toggles.thumbnail ? ButtonStyle.Success : ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`announce_edit_thumbnail_${userId}`).setLabel('Edit Thumbnail URL').setStyle(ButtonStyle.Primary).setDisabled(!draft.toggles.thumbnail),
@@ -76,6 +78,7 @@ function buildBuilderComponents(userId, draft) {
   return rows;
 }
 
+// Build final announcement embed
 function buildAnnouncementEmbed(draft) {
   const e = new EmbedBuilder();
   if (draft.toggles.title && draft.title) e.setTitle(draft.title);
@@ -88,6 +91,7 @@ function buildAnnouncementEmbed(draft) {
   return e;
 }
 
+// Update the builder message in-place (if bot still has access)
 async function updateBuilderMessage(client, userId, draft) {
   try {
     if (!draft.builderMessage) return;
@@ -104,39 +108,49 @@ async function updateBuilderMessage(client, userId, draft) {
   }
 }
 
-// --- main handler function ---
+// MAIN handler for interactions (buttons/modals/selects)
 async function announceHandler(interaction, client) {
   try {
-    const customId = interaction.customId || (interaction.isStringSelectMenu() && interaction.customId);
+    // interested in customId pattern starting with 'announce_'
+    const isButton = interaction.isButton && interaction.isButton();
+    const isModal = interaction.isModalSubmit && interaction.isModalSubmit();
+    const isSelect = interaction.isStringSelectMenu && interaction.isStringSelectMenu();
+
+    if (!isButton && !isModal && !isSelect) return;
+    const customId = interaction.customId;
     if (!customId || !customId.startsWith('announce_')) return;
 
     const parts = customId.split('_');
-    const targetUserId = parts[parts.length - 1];
+    const lastPart = parts[parts.length - 1];
+    const targetUserId = lastPart;
 
+    // only the owner may use these controls
     if (interaction.user.id !== targetUserId) {
-      if (interaction.replied || interaction.deferred) {
-        await interaction.followUp({ content: `This control belongs to <@${targetUserId}>.`, ephemeral: true }).catch(() => {});
-      } else {
+      if (!interaction.replied && !interaction.deferred) {
         await interaction.reply({ content: `This control belongs to <@${targetUserId}>.`, ephemeral: true }).catch(() => {});
+      } else {
+        await interaction.followUp({ content: `This control belongs to <@${targetUserId}>.`, ephemeral: true }).catch(() => {});
       }
       return;
     }
 
     const draft = getDraft(targetUserId);
 
-    // BUTTONS
-    if (interaction.isButton()) {
+    // BUTTON HANDLERS
+    if (isButton) {
       await interaction.deferUpdate().catch(() => {});
-      // toggle
+      // Toggle fields
       if (customId.startsWith('announce_toggle_')) {
         const field = parts[2];
-        draft.toggles[field] = !draft.toggles[field];
-        saveDraft(targetUserId, draft);
-        await updateBuilderMessage(client, targetUserId, draft);
+        if (field && draft.toggles.hasOwnProperty(field)) {
+          draft.toggles[field] = !draft.toggles[field];
+          saveDraft(targetUserId, draft);
+          await updateBuilderMessage(client, targetUserId, draft);
+        }
         return;
       }
 
-      // edit field -> modal
+      // Edit -> open modal
       if (customId.startsWith('announce_edit_')) {
         const field = parts[2];
         const modal = new ModalBuilder().setCustomId(`announce_modal_${field}_${targetUserId}`).setTitle(`Edit ${field}`);
@@ -147,13 +161,14 @@ async function announceHandler(interaction, client) {
           .setRequired(true)
           .setValue(draft[field] || '');
         modal.addComponents(new ActionRowBuilder().addComponents(input));
-        await interaction.showModal(modal).catch(async () => {
-          await interaction.followUp({ content: 'Unable to open modal.', ephemeral: true }).catch(() => {});
+        await interaction.showModal(modal).catch(async (err) => {
+          console.error('showModal failed', err);
+          try { await interaction.followUp({ content: 'Unable to open modal.', ephemeral: true }); } catch {}
         });
         return;
       }
 
-      // set channel
+      // Set channel modal
       if (customId.startsWith('announce_setchannel_')) {
         const modal = new ModalBuilder().setCustomId(`announce_modal_channel_${targetUserId}`).setTitle('Set target channel (mention or id)');
         const input = new TextInputBuilder()
@@ -163,13 +178,14 @@ async function announceHandler(interaction, client) {
           .setRequired(true)
           .setPlaceholder('#announcements or 123456789012345678');
         modal.addComponents(new ActionRowBuilder().addComponents(input));
-        await interaction.showModal(modal).catch(async () => {
-          await interaction.followUp({ content: 'Unable to open modal for channel.', ephemeral: true }).catch(() => {});
+        await interaction.showModal(modal).catch(async (err) => {
+          console.error('channel modal fail', err);
+          try { await interaction.followUp({ content: 'Unable to open channel modal.', ephemeral: true }); } catch {}
         });
         return;
       }
 
-      // custom color
+      // Custom color modal
       if (customId.startsWith('announce_customcolor_')) {
         const modal = new ModalBuilder().setCustomId(`announce_modal_color_${targetUserId}`).setTitle('Enter hex color (#RRGGBB)');
         const input = new TextInputBuilder()
@@ -179,29 +195,29 @@ async function announceHandler(interaction, client) {
           .setRequired(true)
           .setPlaceholder('#ff00aa');
         modal.addComponents(new ActionRowBuilder().addComponents(input));
-        await interaction.showModal(modal).catch(async () => {
-          await interaction.followUp({ content: 'Unable to open color modal.', ephemeral: true }).catch(() => {});
+        await interaction.showModal(modal).catch(async (err) => {
+          console.error('color modal fail', err);
+          try { await interaction.followUp({ content: 'Unable to open color modal.', ephemeral: true }); } catch {}
         });
         return;
       }
 
-      // done
+      // Done
       if (customId.startsWith('announce_done_')) {
         saveDraft(targetUserId, draft);
-        await interaction.followUp({ content: 'Draft saved. Use `p!announce_preview` to preview, `p!announce_edit` to reopen builder, or `p!confirm_announce` to send.', ephemeral: true }).catch(() => {});
+        try { await interaction.followUp({ content: 'Draft saved. Use the preview or confirm commands.', ephemeral: true }); } catch {}
         return;
       }
 
-      // cancel / delete draft
+      // Cancel / delete draft
       if (customId.startsWith('announce_cancel_')) {
         deleteDraft(targetUserId);
-        await interaction.followUp({ content: 'Draft deleted.', ephemeral: true }).catch(() => {});
+        try { await interaction.followUp({ content: 'Draft deleted.', ephemeral: true }); } catch {}
         return;
       }
 
-      // edit-from-preview: re-send builder in saved channel or current channel
+      // Edit-from-preview -> reopen builder in saved or current channel
       if (customId.startsWith('announce_editbuilder_')) {
-        // try to send builder to original builder channel if exists, else to current channel
         let targetChannel = null;
         if (draft.builderMessage && draft.builderMessage.channelId) {
           targetChannel = await client.channels.fetch(draft.builderMessage.channelId).catch(() => null);
@@ -213,15 +229,15 @@ async function announceHandler(interaction, client) {
           const sent = await targetChannel.send({ embeds: [embed], components: rows });
           draft.builderMessage = { channelId: targetChannel.id, messageId: sent.id };
           saveDraft(targetUserId, draft);
-          await interaction.followUp({ content: `Builder opened in ${targetChannel.isDMBased ? 'your DMs' : `<#${targetChannel.id}>`}.`, ephemeral: true }).catch(() => {});
+          await interaction.followUp({ content: `Builder opened in ${targetChannel}.`, ephemeral: true }).catch(() => {});
         } catch (err) {
-          console.error('Failed to reopen builder', err);
+          console.error('Reopen builder failed', err);
           await interaction.followUp({ content: 'Failed to reopen builder in that channel.', ephemeral: true }).catch(() => {});
         }
         return;
       }
 
-      // confirm from preview
+      // Confirm from preview
       if (customId.startsWith('announce_confirmbtn_')) {
         if (!draft.channelId) {
           await interaction.followUp({ content: 'Target channel not set. Set channel before confirming.', ephemeral: true }).catch(() => {});
@@ -238,22 +254,23 @@ async function announceHandler(interaction, client) {
           deleteDraft(targetUserId);
           await interaction.followUp({ content: `Announcement sent to <#${draft.channelId}>`, ephemeral: true }).catch(() => {});
         } catch (err) {
-          console.error(err);
+          console.error('send fail', err);
           await interaction.followUp({ content: 'Failed to send announcement — check bot permissions.', ephemeral: true }).catch(() => {});
         }
         return;
       }
 
-      // cancel preview
+      // Cancel preview
       if (customId.startsWith('announce_cancelpreview_')) {
-        await interaction.followUp({ content: 'Preview canceled.', ephemeral: true }).catch(() => {});
+        // for ephemeral preview, this just dismisses; for normal messages, deletion is handled by message component handler
+        try { await interaction.followUp({ content: 'Preview dismissed.', ephemeral: true }); } catch {}
         return;
       }
     }
 
     // MODAL SUBMITS
-    if (interaction.isModalSubmit()) {
-      const cid = interaction.customId; // announce_modal_<field>_<userId>
+    if (isModal) {
+      const cid = customId; // announce_modal_<field>_<userId> OR announce_modal_channel_<userId> OR announce_modal_color_<userId>
       const parts2 = cid.split('_');
       const field = parts2[2];
 
@@ -305,8 +322,8 @@ async function announceHandler(interaction, client) {
       }
     }
 
-    // SELECT MENU (colors)
-    if (interaction.isStringSelectMenu()) {
+    // SELECT MENU (color presets)
+    if (isSelect) {
       if (customId.startsWith('announce_color_select_')) {
         await interaction.deferUpdate().catch(() => {});
         const val = interaction.values[0];
@@ -326,7 +343,7 @@ async function announceHandler(interaction, client) {
   }
 }
 
-// attach helpers to function object so commands can reuse them
+// attach helpers for reuse by prefix/slash command code
 announceHandler.buildBuilderEmbed = buildBuilderEmbed;
 announceHandler.buildBuilderComponents = buildBuilderComponents;
 announceHandler.buildAnnouncementEmbed = buildAnnouncementEmbed;
