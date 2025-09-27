@@ -1,38 +1,44 @@
-// commands/announceCreate.js
-const announceHandler = require('../interactions/announceHandler');
-const { getDraft, saveDraft } = require('../utils/drafts');
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
+import { saveDraft, getDraft } from '../utils/drafts.js';
 
-module.exports = {
-  name: 'announceCreate',
-  async execute({ message, client }) {
-    try {
-      // attach interaction handler if not already
-      if (!client.__announceHandlerAttached) {
-        client.on('interactionCreate', async (interaction) => {
-          try { await announceHandler(interaction, client); } catch (e) { console.error(e); }
-        });
-        client.__announceHandlerAttached = true;
-      }
+export default {
+  name: 'announcecreate', // prefix: p!announcecreate
+  description: 'Create a new announcement',
+  run: async (client, message, args) => {
+    const draft = getDraft(message.author.id) || {
+      title: '',
+      description: '',
+      color: '#0099ff',
+      footer: '',
+      image: '',
+      thumbnail: '',
+      channelId: message.channel.id
+    };
+    saveDraft(message.author.id, draft);
 
-      const userId = message.author.id;
-      const draft = getDraft(userId);
+    // Create a simple modal to fill title (you can add more inputs)
+    const modal = new ModalBuilder()
+      .setCustomId('announce_modal')
+      .setTitle('Create Announcement')
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('title')
+            .setLabel('Title')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('Enter your title')
+            .setValue(draft.title)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('description')
+            .setLabel('Description')
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder('Enter the description')
+            .setValue(draft.description)
+        )
+      );
 
-      const embed = announceHandler.buildBuilderEmbed(draft, message.author);
-      const components = announceHandler.buildBuilderComponents(userId, draft);
-
-      const sent = await message.channel.send({ embeds: [embed], components }).catch(err => {
-        console.error('Failed to send builder message', err);
-        return null;
-      });
-      if (!sent) return message.reply('Failed to create builder message. Check bot permissions.');
-
-      draft.builderMessage = { channelId: message.channel.id, messageId: sent.id };
-      saveDraft(userId, draft);
-
-      return message.reply('Announcement builder created. Use the buttons in the builder message to edit/toggle fields. When ready press ✅ Done.');
-    } catch (err) {
-      console.error('announceCreate error', err);
-      return message.reply('Internal error creating builder.');
-    }
+    await message.showModal(modal);
   }
 };
