@@ -1,11 +1,16 @@
-// commands/announce_edit.js
-const createCmd = require('./announce_create');
+// commands/announceEdit.js
+const createCmd = require('./announceCreate');
 
 module.exports = {
-  name: 'announce_edit',
+  name: 'announceEdit',
   async execute({ message, client }) {
-    // reuse the create command behavior to (re)open the builder in the current channel
-    await createCmd.execute({ message, client });
-    return message.reply('Reopened builder in this channel.');
+    try {
+      // reuse create behavior to (re)open builder in current channel
+      await createCmd.execute({ message, client });
+      return message.reply('Reopened builder in this channel.');
+    } catch (err) {
+      console.error('announceEdit error', err);
+      return message.reply('Failed to reopen builder.');
+    }
   }
 };
